@@ -60,10 +60,10 @@ class Strategy(bt.Strategy):
 
             if buyConfidence <= 1 and sellConfidence <= 1: continue
 
-            position = self.broker.getposition(data=data)
+            position = self.getposition(data=data,broker=self.broker)
             if buyConfidence > sellConfidence:
                 if not position:
-                    self.buy(data=data, size=10)
+                    self.buy(data=data, price = 1000)
                     self.log(data, 'Bought data #{0} for {1}'.format(dataindex, closedata[0]))
             elif sellConfidence > buyConfidence:
                 if position:
@@ -132,14 +132,21 @@ class Strategy(bt.Strategy):
         return time * slope + intercept
 
 
-def download_data():
-    yf.download(tickers="AAPL", period="7d", interval="1m").to_csv('data.csv')
-    data = pd.read_csv('data.csv', sep=r'\s*,\s*', header=0, encoding='ascii', engine='python')
-    data['Datetime'] = data['Datetime'].apply(lambda x: str(x)[0:19])
-    data.to_csv('data.csv', sep=',', header=0, encoding='ascii')
-def parse_data():
-    return bt.feeds.GenericCSVData(
-            dataname='data.csv',
+def download_data(tickers):
+    filenames = []
+    for ticker in tickers:
+        filename = '{0}.csv'.format(ticker)
+        yf.download(tickers=ticker, period="7d", interval="1m").to_csv(filename)
+        data = pd.read_csv(filename, sep=r'\s*,\s*', header=0, encoding='ascii', engine='python')
+        data['Datetime'] = data['Datetime'].apply(lambda x: str(x)[0:19])
+        data.to_csv(filename, sep=',', header=0, encoding='ascii')
+        filenames.append(filename)
+    return filenames
+def parse_data(filenames):
+    datas = []
+    for filename in filenames:
+        datas.append(bt.feeds.GenericCSVData(
+            dataname=filename,
             dtformat=('%Y-%m-%d %H:%M:%S'),
             timeframe=bt.TimeFrame.Minutes,
             datetime=1,
@@ -147,17 +154,18 @@ def parse_data():
             high=3,
             low=4,
             close=5,
-            volume=7)
+            volume=7))
+    return datas
 
 if __name__ == '__main__':
     cerebro = bt.Cerebro()
     cerebro.broker.setcash(10000.0)
     strats = cerebro.addstrategy(Strategy)
 
-    download_data()
-    data = parse_data()
+    filenames = download_data(['AAPL', 'FB', 'MSFT', 'GOOG', 'TSLA', '^GSPC'])
+    datas = parse_data(filenames)
 
-    cerebro.adddata(data)
+    for data in datas: cerebro.adddata(data)
 
     cerebro.run()
     cerebro.plot()
