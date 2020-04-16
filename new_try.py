@@ -43,34 +43,27 @@ class Strategy(bt.Strategy):
                 highdata.append(data.high[i])
                 closedata.append(data.close[i])
 
-            (_, c_pmin, c_mintrend, _), (_, c_pmax, c_maxtrend, _) = tl.calc_support_resistance(closedata[:self.params.timeframe-1])
-            (_, lh_pmin, lh_mintrend, _), (_, lh_pmax, lh_maxtrend, _) = tl.calc_support_resistance((lowdata[:self.params.timeframe-1],
+            (_, _, c_mintrend, _), (_, _, c_maxtrend, _) = tl.calc_support_resistance(closedata[:self.params.timeframe-1])
+            (_, _, lh_mintrend, _), (_, _, lh_maxtrend, _) = tl.calc_support_resistance((lowdata[:self.params.timeframe-1],
                                                                                                      highdata[:self.params.timeframe-1]))
 
-            c_buy_sell_prediction = self.buy_sell_prediction(closedata,
-                                                             self.params.timeframe,
-                                                             c_pmin, c_mintrend,
-                                                             c_pmax, c_maxtrend)
-            lh_buy_sell_prediction = self.buy_sell_prediction(closedata,
-                                                              self.params.timeframe,
-                                                              lh_pmin, lh_mintrend,
-                                                              lh_pmax, lh_maxtrend)
-
-            buyConfidence = c_buy_sell_prediction[0] / 2.0 + lh_buy_sell_prediction[0]
-            sellConfidence = c_buy_sell_prediction[1] / 2.0 + lh_buy_sell_prediction[1]
-
-            if buyConfidence < 2.0 and sellConfidence < 2.0: continue
+            sell_buy_prediction = self.sell_buy_prediction(closedata,
+                                                           closedata,
+                                                           self.params.timeframe,
+                                                           c_mintrend,
+                                                           c_maxtrend)
 
             position = self.getposition(data=data, broker=self.broker)
-            shouldBuy = buyConfidence >= sellConfidence and not position
-            shouldSell = sellConfidence >= buyConfidence and position
 
-            if shouldBuy:
-                self.buy(data=data, price=4500)
-                self.log(data, 'Bought data #{0} for {1}'.format(dataindex, closedata[self.params.timeframe]))
-            elif shouldSell:
+            shouldSell = position and sell_buy_prediction[0]
+            shouldBuy = not position and sell_buy_prediction[1]
+
+            if shouldSell:
                 self.sell(data=data, size=position.size)
                 self.log(data, 'Sold data #{0} for {1}'.format(dataindex, closedata[self.params.timeframe]))
+            elif shouldBuy:
+                self.buy(data=data, price=2000.0)
+                self.log(data, 'Bought data #{0} for {1}'.format(dataindex, closedata[self.params.timeframe]))
 
     def notify_trade(self, trade):
         if not trade.isclosed: return
@@ -89,44 +82,33 @@ class Strategy(bt.Strategy):
         print('End cash: %.2f' % (self.broker.getvalue()))
         print('Win ratio: %.2f' % (self.wins/(self.wins+self.loses)))
 
-    def buy_sell_prediction(self, dataclose, timeframe, pmin, mintrend, pmax, maxtrend):
-        buyConfidence = 0.0
-        sellConfidence = 0.0
+    def sell_buy_prediction(self, buydata, selldata, timeframe, mintrend, maxtrend):
+
+        shouldSell = False
+        shouldBuy = False
+
+        if mintrend:
+            sellConfidence = 0
+            price = selldata[timeframe]
+            for trend in mintrend:
+                trends = trend[1][0]
+                trendi = trend[1][1]
+                predicted_price = self.price_prediction(timeframe, trends, trendi)
+                if price < predicted_price: sellConfidence += 1
+            shouldSell = sellConfidence == len(mintrend)
 
         if maxtrend:
-            for max in maxtrend:
-                maxs = max[1][0]
-                maxi = max[1][1]
-                if dataclose[timeframe] > self.price_prediction(timeframe, maxs, maxi):
-                    buyConfidence += 1
-                else:
-                    buyConfidence -= 0.5
-        if mintrend:
-            for min in mintrend:
-                mins = min[1][0]
-                mini = min[1][1]
-                if dataclose[timeframe] < self.price_prediction(timeframe, mins, mini):
-                    sellConfidence += 1
-                else:
-                    sellConfidence -= 0.5
+            buyConfidence = 0
+            price = buydata[timeframe]
+            for trend in mintrend:
+                trends = trend[1][0]
+                trendi = trend[1][1]
+                predicted_price = self.price_prediction(timeframe, trends, trendi)
+                if price > predicted_price: buyConfidence += 1
+            shouldBuy = buyConfidence == len(maxtrend)
 
-        if pmax:
-            maxs = pmax[0]
-            maxi = pmax[1]
-            if dataclose[timeframe] > self.price_prediction(timeframe, maxs, maxi):
-                buyConfidence += 0.25
-            else:
-                buyConfidence -= 0.25
+        return [shouldSell, shouldBuy]
 
-        if pmin:
-            mins = pmin[0]
-            mini = pmin[1]
-            if dataclose[timeframe] < self.price_prediction(timeframe, mins, mini):
-                sellConfidence += 0.25
-            else:
-                sellConfidence -= 0.25
-
-        return [buyConfidence, sellConfidence]
 
     def price_prediction(self, time, slope, intercept):
         return time * slope + intercept
@@ -159,7 +141,7 @@ def parse_data(filenames):
 
 if __name__ == '__main__':
     cerebro = bt.Cerebro()
-    cerebro.broker.setcash(100000)
+    cerebro.broker.setcash(10000.0)
     strats = cerebro.addstrategy(Strategy)
 
     filenames = download_data(['AAPL', 'FB', 'MSFT', 'GOOG', 'TSLA', '^GSPC', 'AMZN',
